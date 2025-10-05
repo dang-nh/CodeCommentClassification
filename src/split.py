@@ -30,12 +30,20 @@ def group_aware_split(
     group_list = list(unique_groups)
     group_label_matrix = np.array([group_labels[g] for g in group_list])
     
-    train_groups, test_groups = train_test_split(
-        group_list,
-        test_size=test_size,
-        random_state=seed,
-        stratify=group_label_matrix.sum(axis=1)
-    )
+    try:
+        train_groups, test_groups = train_test_split(
+            group_list,
+            test_size=test_size,
+            random_state=seed,
+            stratify=group_label_matrix.sum(axis=1)
+        )
+    except ValueError:
+        print("Warning: Stratification failed, using random split without stratification")
+        train_groups, test_groups = train_test_split(
+            group_list,
+            test_size=test_size,
+            random_state=seed
+        )
     
     train_mask = df['class_id'].isin(train_groups)
     test_mask = df['class_id'].isin(test_groups)
