@@ -1,0 +1,43 @@
+model_name: "sentence-transformers/all-MiniLM-L6-v2"
+tokenizer_name: "sentence-transformers/all-MiniLM-L6-v2"
+num_labels: 16
+max_len: 128
+precision: "fp32"
+gradient_checkpointing: false
+
+peft:
+  enabled: false
+
+loss_type: "bce"
+loss_params: {}
+
+train_params:
+  batch_size: 64
+  grad_accum: 1
+  epochs: 3
+  lr: 0.0001
+  scheduler: "linear"
+  warmup: 0.1
+  weight_decay: 0.01
+  seed: 123
+
+data:
+  raw_path: "data/raw/sentences.csv"
+  processed_path: "data/processed/"
+  split_file: "data/processed/splits.json"
+  label_list_file: "data/processed/labels.json"
+
+eval:
+  metrics: ["precision", "recall", "f1", "pr_auc"]
+  threshold_search: true
+  pr_curves_output_dir: "plots/"
+
+chains:
+  enabled: false
+  num_orders: 3
+
+logging:
+  output_dir: "runs/"
+  save_every: 1
+  early_stop: 3
+  tensorboard: true

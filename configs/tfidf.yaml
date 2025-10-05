@@ -1,0 +1,27 @@
+model_type: "svm"
+max_features: 10000
+ngram_range: [1, 2]
+min_df: 2
+max_df: 0.95
+
+svm_params:
+  C: 1.0
+  max_iter: 1000
+
+logreg_params:
+  C: 1.0
+  max_iter: 1000
+  solver: "lbfgs"
+
+data:
+  raw_path: "data/raw/sentences.csv"
+  processed_path: "data/processed/"
+  split_file: "data/processed/splits.json"
+  label_list_file: "data/processed/labels.json"
+
+eval:
+  metrics: ["precision", "recall", "f1", "pr_auc"]
+  threshold_search: false
+
+logging:
+  output_dir: "runs/"
