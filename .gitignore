@@ -42,3 +42,4 @@ plots/
 logs/
 tensorboard/
 *.log
+tmp/*
