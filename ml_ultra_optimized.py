@@ -17,9 +17,22 @@ from scipy.sparse import hstack
 from imblearn.over_sampling import SMOTE, ADASYN
 from collections import Counter
 import warnings
+import random
+import json
 warnings.filterwarnings('ignore')
 
-from src.utils import set_seed, save_json
+
+def set_seed(seed: int):
+    """Set random seed for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+
+
+def save_json(data, path: str):
+    """Save data as JSON with pretty formatting."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
 
 
 def extract_ultra_nlp_features(text):

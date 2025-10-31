@@ -1,45 +1,39 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-.venv/
 venv/
-ENV/
 env/
-.cache/
-*.egg-info/
-dist/
-build/
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.mypy_cache/
-.dmypy.json
-dmypy.json
+ENV/
 
-data/raw/
-data/processed/
+# Data
+*.csv
+*.xlsx
+*.arff
+data/code-comment-classification/
+
+# Results
 runs/
 plots/
-*.pt
-*.pth
-*.ckpt
-*.npy
-*.npz
-*.csv
-!data/raw/.gitkeep
-!data/processed/.gitkeep
+*.log
 
-.DS_Store
-.idea/
+# IDEs
 .vscode/
+.idea/
 *.swp
 *.swo
-*~
 
-logs/
-tensorboard/
-*.log
-tmp/*
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp/
+archive/
+*.tmp
+
+# Keep important data
+!data/raw/sentences.csv
+!data/processed/splits.json
