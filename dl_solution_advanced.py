@@ -25,6 +25,13 @@ import warnings
 import random
 warnings.filterwarnings('ignore')
 
+try:
+    import nlpaug.augmenter.word as naw
+    NLPAUG_AVAILABLE = True
+except ImportError:
+    NLPAUG_AVAILABLE = False
+    print("⚠️ nlpaug not available. Data augmentation disabled.")
+
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -35,13 +42,36 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark = False
 
 
-class AsymmetricLoss(nn.Module):
-    def __init__(self, gamma_pos=0, gamma_neg=4, clip=0.05, eps=1e-8):
+class DataAugmenter:
+    def __init__(self, aug_p=0.3):
+        self.aug_p = aug_p
+        self.synonym_aug = None
+        
+        if NLPAUG_AVAILABLE:
+            try:
+                self.synonym_aug = naw.SynonymAug(aug_src='wordnet', aug_p=0.1)
+            except:
+                pass
+    
+    def augment(self, text):
+        if random.random() > self.aug_p or self.synonym_aug is None:
+            return text
+        
+        try:
+            augmented = self.synonym_aug.augment(text)
+            return augmented
+        except:
+            return text
+
+
+class AsymmetricLossWithClassWeights(nn.Module):
+    def __init__(self, gamma_pos=0, gamma_neg=4, clip=0.05, class_weights=None, eps=1e-8):
         super().__init__()
         self.gamma_pos = gamma_pos
         self.gamma_neg = gamma_neg
         self.clip = clip
         self.eps = eps
+        self.class_weights = class_weights
 
     def forward(self, logits, targets):
         probs = torch.sigmoid(logits)
@@ -59,14 +89,19 @@ class AsymmetricLoss(nn.Module):
         loss_neg = loss_neg * probs_pos ** self.gamma_neg
         
         loss = -(loss_pos + loss_neg)
+        
+        if self.class_weights is not None:
+            loss = loss * self.class_weights.unsqueeze(0)
+        
         return loss.mean()
 
 
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.25, gamma=2.0):
+    def __init__(self, alpha=0.25, gamma=2.0, class_weights=None):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.class_weights = class_weights
 
     def forward(self, logits, targets):
         bce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
@@ -79,21 +114,31 @@ class FocalLoss(nn.Module):
             focal_weight = alpha_t * focal_weight
         
         loss = focal_weight * bce_loss
+        
+        if self.class_weights is not None:
+            loss = loss * self.class_weights.unsqueeze(0)
+        
         return loss.mean()
 
 
 class CodeCommentDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_len=512):
+    def __init__(self, texts, labels, tokenizer, max_len=512, augment=False, augmenter=None):
         self.texts = texts
         self.labels = labels
         self.tokenizer = tokenizer
         self.max_len = max_len
+        self.augment = augment
+        self.augmenter = augmenter
 
     def __len__(self):
         return len(self.texts)
 
     def __getitem__(self, idx):
         text = str(self.texts[idx])
+        
+        if self.augment and self.augmenter:
+            text = self.augmenter.augment(text)
+        
         label = self.labels[idx]
 
         encoding = self.tokenizer(
@@ -113,6 +158,22 @@ class CodeCommentDataset(Dataset):
         }
 
 
+class MultiSampleDropout(nn.Module):
+    def __init__(self, hidden_size, num_labels, num_samples=5, dropout=0.1):
+        super().__init__()
+        self.num_samples = num_samples
+        self.dropouts = nn.ModuleList([nn.Dropout(dropout) for _ in range(num_samples)])
+        self.classifiers = nn.ModuleList([
+            nn.Linear(hidden_size, num_labels) for _ in range(num_samples)
+        ])
+    
+    def forward(self, x):
+        logits_list = []
+        for dropout, classifier in zip(self.dropouts, self.classifiers):
+            logits_list.append(classifier(dropout(x)))
+        return torch.mean(torch.stack(logits_list), dim=0)
+
+
 class TransformerClassifier(nn.Module):
     def __init__(
         self,
@@ -122,11 +183,14 @@ class TransformerClassifier(nn.Module):
         use_lora=True,
         lora_r=8,
         lora_alpha=16,
-        lora_dropout=0.05
+        lora_dropout=0.05,
+        use_multisample_dropout=True,
+        label_smoothing=0.0
     ):
         super().__init__()
         self.num_labels = num_labels
         self.use_lora = use_lora
+        self.label_smoothing = label_smoothing
         
         self.encoder = AutoModel.from_pretrained(model_name)
         
@@ -143,19 +207,25 @@ class TransformerClassifier(nn.Module):
             )
             self.encoder = get_peft_model(self.encoder, lora_config)
             print(f"✅ LoRA enabled: r={lora_r}, alpha={lora_alpha}")
-        else:
-            trainable_params = sum(p.numel() for p in self.encoder.parameters() if p.requires_grad)
-            total_params = sum(p.numel() for p in self.encoder.parameters())
-            print(f"✅ Full SFT enabled: {trainable_params:,}/{total_params:,} parameters trainable ({trainable_params/total_params*100:.1f}%)")
         
-        self.classifier = nn.Sequential(
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, num_labels)
-        )
+        if use_multisample_dropout:
+            self.classifier = nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_size, hidden_size // 2),
+                nn.LayerNorm(hidden_size // 2),
+                nn.GELU(),
+                MultiSampleDropout(hidden_size // 2, num_labels, num_samples=5, dropout=dropout)
+            )
+        else:
+            self.classifier = nn.Sequential(
+                nn.Dropout(dropout),
+                nn.Linear(hidden_size, hidden_size // 2),
+                nn.LayerNorm(hidden_size // 2),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_size // 2, num_labels)
+            )
 
     def forward(self, input_ids, attention_mask):
         if self.use_lora and hasattr(self.encoder, 'get_base_model'):
@@ -177,6 +247,46 @@ class TransformerClassifier(nn.Module):
         return logits
 
 
+class FGM:
+    def __init__(self, model, epsilon=1.0):
+        self.model = model
+        self.epsilon = epsilon
+        self.backup = {}
+
+    def attack(self, emb_name='word_embeddings'):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad and emb_name in name:
+                self.backup[name] = param.data.clone()
+                norm = torch.norm(param.grad)
+                if norm != 0 and not torch.isnan(norm):
+                    r_at = self.epsilon * param.grad / norm
+                    param.data.add_(r_at)
+
+    def restore(self, emb_name='word_embeddings'):
+        for name, param in self.model.named_parameters():
+            if param.requires_grad and emb_name in name:
+                assert name in self.backup
+                param.data = self.backup[name]
+        self.backup = {}
+
+
+def compute_class_weights(labels):
+    num_labels = labels.shape[1]
+    weights = []
+    for i in range(num_labels):
+        pos_count = labels[:, i].sum()
+        neg_count = len(labels) - pos_count
+        if pos_count > 0:
+            weight = neg_count / pos_count
+        else:
+            weight = 1.0
+        weights.append(weight)
+    weights = np.array(weights)
+    weights = weights / weights.mean()
+    weights = np.clip(weights, 0.5, 5.0)
+    return torch.FloatTensor(weights)
+
+
 def optimize_thresholds(y_true, y_probs, num_thresholds=100):
     thresholds = np.linspace(0.1, 0.9, num_thresholds)
     num_labels = y_true.shape[1]
@@ -194,37 +304,59 @@ def optimize_thresholds(y_true, y_probs, num_thresholds=100):
     return best_thresholds, best_f1s
 
 
-def train_epoch(model, dataloader, optimizer, scheduler, criterion, device, scaler=None):
+def train_epoch(model, dataloader, optimizer, scheduler, criterion, device, scaler=None, use_fgm=False, grad_accum=1):
     model.train()
     total_loss = 0
     
+    fgm = FGM(model) if use_fgm else None
+    
     progress_bar = tqdm(dataloader, desc="Training")
-    for batch in progress_bar:
+    for batch_idx, batch in enumerate(progress_bar):
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         targets = batch['labels'].to(device)
         
-        optimizer.zero_grad()
-        
         if scaler is not None:
             with torch.cuda.amp.autocast():
                 logits = model(input_ids=input_ids, attention_mask=attention_mask)
-                loss = criterion(logits, targets)
+                loss = criterion(logits, targets) / grad_accum
             
             scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            scaler.update()
+            
+            if use_fgm and fgm and (batch_idx + 1) % grad_accum == 0:
+                fgm.attack()
+                with torch.cuda.amp.autocast():
+                    logits_adv = model(input_ids=input_ids, attention_mask=attention_mask)
+                    loss_adv = criterion(logits_adv, targets) / grad_accum
+                scaler.scale(loss_adv).backward()
+                fgm.restore()
+            
+            if (batch_idx + 1) % grad_accum == 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+                if scheduler is not None:
+                    scheduler.step()
         else:
             logits = model(input_ids=input_ids, attention_mask=attention_mask)
-            loss = criterion(logits, targets)
+            loss = criterion(logits, targets) / grad_accum
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-        
-        if scheduler is not None:
-            scheduler.step()
+            
+            if use_fgm and fgm and (batch_idx + 1) % grad_accum == 0:
+                fgm.attack()
+                logits_adv = model(input_ids=input_ids, attention_mask=attention_mask)
+                loss_adv = criterion(logits_adv, targets) / grad_accum
+                loss_adv.backward()
+                fgm.restore()
+            
+            if (batch_idx + 1) % grad_accum == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                optimizer.zero_grad()
+                if scheduler is not None:
+                    scheduler.step()
         
         total_loss += loss.item()
         progress_bar.set_postfix({'loss': loss.item()})
@@ -303,8 +435,12 @@ def train_fold(
     
     tokenizer = AutoTokenizer.from_pretrained(config['tokenizer_name'])
     
+    augmenter = DataAugmenter(aug_p=config.get('augment_p', 0.3)) if config.get('use_augmentation', False) else None
+    
     train_dataset = CodeCommentDataset(
-        train_texts, train_labels, tokenizer, config['max_len']
+        train_texts, train_labels, tokenizer, config['max_len'],
+        augment=config.get('use_augmentation', False),
+        augmenter=augmenter
     )
     val_dataset = CodeCommentDataset(
         val_texts, val_labels, tokenizer, config['max_len']
@@ -332,17 +468,25 @@ def train_fold(
         use_lora=config['peft']['enabled'],
         lora_r=config['peft']['r'],
         lora_alpha=config['peft']['alpha'],
-        lora_dropout=config['peft']['dropout']
+        lora_dropout=config['peft']['dropout'],
+        use_multisample_dropout=config.get('use_multisample_dropout', True),
+        label_smoothing=config.get('label_smoothing', 0.0)
     ).to(device)
     
+    class_weights = None
+    if config.get('use_class_weights', False):
+        class_weights = compute_class_weights(train_labels).to(device)
+        print(f"✅ Class weights enabled: min={class_weights.min():.2f}, max={class_weights.max():.2f}")
+    
     if config['loss_type'] == 'asl':
-        criterion = AsymmetricLoss(
+        criterion = AsymmetricLossWithClassWeights(
             gamma_pos=config['loss_params']['gamma_pos'],
             gamma_neg=config['loss_params']['gamma_neg'],
-            clip=config['loss_params']['clip']
+            clip=config['loss_params']['clip'],
+            class_weights=class_weights
         )
     elif config['loss_type'] == 'focal':
-        criterion = FocalLoss(alpha=0.25, gamma=2.0)
+        criterion = FocalLoss(alpha=0.25, gamma=2.0, class_weights=class_weights)
     else:
         criterion = nn.BCEWithLogitsLoss()
     
@@ -364,7 +508,8 @@ def train_fold(
             optimizer, num_warmup_steps, num_training_steps
         )
     
-    scaler = torch.cuda.amp.GradScaler() if config.get('precision') == 'fp16' else None
+    scaler = torch.cuda.amp.GradScaler() if config.get('precision') in ['fp16', 'bf16'] else None
+    use_fgm = config.get('use_fgm', False)
     
     best_f1 = 0
     patience_counter = 0
@@ -373,7 +518,8 @@ def train_fold(
         print(f"\nEpoch {epoch + 1}/{config['train_params']['epochs']}")
         
         train_loss = train_epoch(
-            model, train_loader, optimizer, scheduler, criterion, device, scaler
+            model, train_loader, optimizer, scheduler, criterion, device, scaler, use_fgm,
+            grad_accum=config['train_params'].get('grad_accum', 1)
         )
         print(f"Train Loss: {train_loss:.4f}")
         
@@ -417,7 +563,7 @@ def main():
     if len(sys.argv) > 1:
         config_path = Path(sys.argv[1])
     else:
-        config_path = Path('./configs/dl_best_config.yaml')
+        config_path = Path('./configs/dl_advanced_config.yaml')
     
     print(f"📁 Loading config from: {config_path}")
     with open(config_path, 'r') as f:
@@ -429,7 +575,7 @@ def main():
     print(f"Using device: {device}")
     
     print("\n" + "="*80)
-    print("DEEP LEARNING SOLUTION - TRANSFORMER-BASED MULTI-LABEL CLASSIFICATION")
+    print("ADVANCED DEEP LEARNING SOLUTION")
     print("="*80)
     
     df = pd.read_csv(config['data']['raw_path'])
@@ -477,11 +623,6 @@ def main():
         
         print(f"Train set: {len(train_texts)} samples")
         print(f"Test set:  {len(val_texts)} samples")
-        print(f"\nTrain label distribution:")
-        for i, label in enumerate(label_columns):
-            train_count = train_labels[:, i].sum()
-            val_count = val_labels[:, i].sum()
-            print(f"  {label:30s}: train={int(train_count):4d} ({train_count/len(train_labels)*100:5.1f}%)  test={int(val_count):4d} ({val_count/len(val_labels)*100:5.1f}%)")
         
         result = train_fold(
             0,
@@ -517,7 +658,7 @@ def main():
             )
             fold_results.append(result)
     
-    output_dir = Path('./runs/dl_solution')
+    output_dir = Path('./runs/dl_advanced')
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("\n" + "="*80)
