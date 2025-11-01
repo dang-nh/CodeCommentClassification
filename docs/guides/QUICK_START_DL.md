@@ -420,8 +420,8 @@ Val loss:     > 1.0      ⚠️  Poor generalization
 
 ## 📚 Additional Resources
 
-- **Full Documentation:** `DEEP_LEARNING_APPROACH.md`
-- **Model Comparison:** `compare_ml_dl.py`
+- **Full Documentation:** `DEEP_LEARNING_APPROACH.md` (in same directory)
+- **Model Comparison:** `scripts/utils/compare_ml_dl.py`
 - **Configuration Guide:** `configs/dl_*.yaml`
 - **Troubleshooting:** See above section
 

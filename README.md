@@ -85,14 +85,16 @@ CodeCommentClassification/
 │   ├── ml_advanced_solution.py    # Advanced ML (60.88% F1)
 │   ├── ml_solution_plan.py        # Basic ML
 │   └── best_reproduction.py       # Baseline reproduction
-├── documentation/                 # ML documentation
-│   ├── FINAL_RESULTS_REPORT.md    # ML results
-│   ├── ADVANCED_ML_STRATEGY.md    # ML strategy
-│   └── RESULTS_GUIDE.md           # Results guide
-├── DEEP_LEARNING_APPROACH.md      # 🔥 DL comprehensive guide
-├── QUICK_START_DL.md              # 🔥 DL quick start
-├── MODEL_RECOMMENDATIONS.md       # 🔥 Model selection guide
-├── DL_SOLUTION_SUMMARY.md         # 🔥 DL summary
+├── docs/                          # All documentation
+│   ├── guides/                    # Detailed guides
+│   │   ├── QUICK_START_DL.md     # DL quick start
+│   │   ├── DEEP_LEARNING_APPROACH.md  # DL comprehensive guide
+│   │   ├── MODEL_RECOMMENDATIONS.md   # Model selection guide
+│   │   └── DL_SOLUTION_SUMMARY.md     # DL summary
+│   ├── reference/                 # Quick reference
+│   │   ├── QUICK_REFERENCE.md    # Command reference
+│   │   └── START_HERE.md         # Getting started
+│   └── [ML documentation]         # ML-related docs
 ├── experiments/                   # Experiment scripts
 ├── tests/                         # Unit tests
 └── runs/                          # Results (gitignored)
@@ -132,7 +134,7 @@ CodeCommentClassification/
 
 **Expected Performance:** 75-85% F1 (micro), 70-80% F1 (macro)
 
-**See:** `DEEP_LEARNING_APPROACH.md` for details
+**See:** `docs/guides/DEEP_LEARNING_APPROACH.md` for details
 
 ---
 
@@ -274,15 +276,15 @@ VotingClassifier([
 ## 📚 Documentation
 
 ### Deep Learning (NEW) 🔥
-- **[DEEP_LEARNING_APPROACH.md](DEEP_LEARNING_APPROACH.md)** - Comprehensive DL guide
-- **[QUICK_START_DL.md](QUICK_START_DL.md)** - Quick start guide
-- **[MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md)** - Model selection
-- **[DL_SOLUTION_SUMMARY.md](DL_SOLUTION_SUMMARY.md)** - Executive summary
+- **[DEEP_LEARNING_APPROACH.md](docs/guides/DEEP_LEARNING_APPROACH.md)** - Comprehensive DL guide
+- **[QUICK_START_DL.md](docs/guides/QUICK_START_DL.md)** - Quick start guide
+- **[MODEL_RECOMMENDATIONS.md](docs/guides/MODEL_RECOMMENDATIONS.md)** - Model selection
+- **[DL_SOLUTION_SUMMARY.md](docs/guides/DL_SOLUTION_SUMMARY.md)** - Executive summary
 
 ### Traditional ML
-- **[FINAL_RESULTS_REPORT.md](documentation/FINAL_RESULTS_REPORT.md)** - Complete ML analysis
-- **[ADVANCED_ML_STRATEGY.md](documentation/ADVANCED_ML_STRATEGY.md)** - ML strategy
-- **[RESULTS_GUIDE.md](documentation/RESULTS_GUIDE.md)** - Navigation guide
+- **[FINAL_RESULTS_REPORT.md](docs/FINAL_RESULTS_REPORT.md)** - Complete ML analysis
+- **[ADVANCED_ML_STRATEGY.md](docs/ADVANCED_ML_STRATEGY.md)** - ML strategy
+- **[RESULTS_GUIDE.md](docs/RESULTS_GUIDE.md)** - Navigation guide
 
 ---
 

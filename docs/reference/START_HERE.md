@@ -40,13 +40,13 @@ python compare_ml_dl.py
 ## 📚 Documentation
 
 ### Quick References
-- **[QUICK_START_DL.md](QUICK_START_DL.md)** - Quick start guide
-- **[IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md)** - What was built
+- **[QUICK_START_DL.md](../guides/QUICK_START_DL.md)** - Quick start guide
+- **[IMPLEMENTATION_COMPLETE.md](../IMPLEMENTATION_COMPLETE.md)** - What was built
 
 ### Comprehensive Guides
-- **[DEEP_LEARNING_APPROACH.md](DEEP_LEARNING_APPROACH.md)** - Full DL guide
-- **[MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md)** - Model selection
-- **[DL_SOLUTION_SUMMARY.md](DL_SOLUTION_SUMMARY.md)** - Executive summary
+- **[DEEP_LEARNING_APPROACH.md](../guides/DEEP_LEARNING_APPROACH.md)** - Full DL guide
+- **[MODEL_RECOMMENDATIONS.md](../guides/MODEL_RECOMMENDATIONS.md)** - Model selection
+- **[DL_SOLUTION_SUMMARY.md](../guides/DL_SOLUTION_SUMMARY.md)** - Executive summary
 
 ### Main Documentation
 - **[README.md](README.md)** - Project overview
@@ -79,10 +79,10 @@ python compare_ml_dl.py
 
 ## 💡 Need Help?
 
-1. **System check:** `python choose_approach.py`
-2. **Quick start:** See `QUICK_START_DL.md`
-3. **Model selection:** See `MODEL_RECOMMENDATIONS.md`
-4. **Troubleshooting:** See `DEEP_LEARNING_APPROACH.md`
+1. **System check:** `python scripts/utils/choose_approach.py`
+2. **Quick start:** See `docs/guides/QUICK_START_DL.md`
+3. **Model selection:** See `docs/guides/MODEL_RECOMMENDATIONS.md`
+4. **Troubleshooting:** See `docs/guides/DEEP_LEARNING_APPROACH.md`
 
 ---
 
