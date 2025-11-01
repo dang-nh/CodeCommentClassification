@@ -67,8 +67,8 @@ python compare_ml_dl.py
 ```
 CodeCommentClassification/
 ├── dl_solution.py                 # 🏆 Deep Learning (75-85% F1) - BEST
+├── dl_solution_advanced.py        # Advanced DL with extra features
 ├── ml_ultra_optimized.py          # Traditional ML (60-70% F1)
-├── compare_ml_dl.py               # Compare ML vs DL
 ├── configs/                       # Model configurations
 │   ├── dl_optimized.yaml          # CodeBERT (recommended)
 │   ├── dl_graphcodebert.yaml      # GraphCodeBERT
@@ -95,6 +95,12 @@ CodeCommentClassification/
 │   │   ├── QUICK_REFERENCE.md    # Command reference
 │   │   └── START_HERE.md         # Getting started
 │   └── [ML documentation]         # ML-related docs
+├── scripts/                       # Utility scripts
+│   ├── utils/                     # Utility scripts
+│   │   ├── compare_ml_dl.py      # Compare ML vs DL
+│   │   ├── choose_approach.py    # System check
+│   │   └── analyze_comment_lengths.py  # Length analysis
+│   └── prepare_competition_data.py  # Data preparation
 ├── experiments/                   # Experiment scripts
 ├── tests/                         # Unit tests
 └── runs/                          # Results (gitignored)
