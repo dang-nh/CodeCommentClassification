@@ -1,16 +1,16 @@
-model_name: "answerdotai/ModernBERT-base"
-tokenizer_name: "answerdotai/ModernBERT-base"
+model_name: "microsoft/graphcodebert-base"
+tokenizer_name: "microsoft/graphcodebert-base"
 num_labels: 16
-max_len: 512
-precision: "fp16"
+max_len: 128
+precision: "bf16"
 gradient_checkpointing: false
-use_single_split: false
+use_single_split: true
 
 peft:
   enabled: false
   r: 64
   alpha: 128
-  dropout: 0.0
+  dropout: 0.1
 
 loss_type: "asl"
 loss_params:
@@ -19,12 +19,12 @@ loss_params:
   clip: 0.05
 
 train_params:
-  batch_size: 128
+  batch_size: 32
   grad_accum: 1
-  epochs: 130
-  lr: 0.000005
+  epochs: 1000
+  lr: 0.00005
   scheduler: "cosine"
-  warmup: 0.1
+  warmup: 0.01
   weight_decay: 0.01
   seed: 42
 
@@ -41,6 +41,6 @@ eval:
 logging:
   output_dir: "runs/"
   save_every: 1
-  early_stop: 3
+  early_stop: 5
   tensorboard: false
 

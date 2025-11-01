@@ -1,10 +1,10 @@
-model_name: "answerdotai/ModernBERT-base"
-tokenizer_name: "answerdotai/ModernBERT-base"
+model_name: "microsoft/codebert-base"
+tokenizer_name: "microsoft/codebert-base"
 num_labels: 16
 max_len: 512
 precision: "fp16"
 gradient_checkpointing: false
-use_single_split: false
+use_single_split: true
 
 peft:
   enabled: false
@@ -19,10 +19,10 @@ loss_params:
   clip: 0.05
 
 train_params:
-  batch_size: 128
+  batch_size: 16
   grad_accum: 1
-  epochs: 130
-  lr: 0.000005
+  epochs: 15
+  lr: 0.0003
   scheduler: "cosine"
   warmup: 0.1
   weight_decay: 0.01
