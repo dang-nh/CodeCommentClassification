@@ -716,7 +716,7 @@ def train_full(df, label_cols, config, device, save_path: Path, med_thresholds: 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("config", nargs="?", default="configs/train_config_19_cv.yaml")
+    parser.add_argument("config", nargs="?", default="configs/train_config.yaml")
     args = parser.parse_args()
 
     cfg_path = Path(args.config)
