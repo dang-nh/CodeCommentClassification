@@ -12,7 +12,7 @@ peft:
   alpha: 128
   dropout: 0.1
 
-loss_type: "asl"
+loss_type: "focal"
 loss_params:
   gamma_pos: 0
   gamma_neg: 4

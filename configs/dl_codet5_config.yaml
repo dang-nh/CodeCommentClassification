@@ -1,5 +1,5 @@
-model_name: "Salesforce/codet5-base"
-tokenizer_name: "Salesforce/codet5-base"
+model_name: "microsoft/codebert-base"
+tokenizer_name: "microsoft/codebert-base"
 num_labels: 16
 max_len: 256
 precision: "fp16"
@@ -7,7 +7,7 @@ gradient_checkpointing: false
 use_single_split: true
 
 peft:
-  enabled: true
+  enabled: false
   r: 32
   alpha: 64
   dropout: 0.1

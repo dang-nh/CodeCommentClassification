@@ -5,8 +5,10 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import (
     AutoTokenizer,
     AutoModel,
-    get_cosine_schedule_with_warmup,
-    get_linear_schedule_with_warmup
+    Trainer,
+    TrainingArguments,
+    EvalPrediction,
+    TrainerCallback
 )
 from peft import get_peft_model, LoraConfig, TaskType
 import numpy as np
@@ -20,9 +22,9 @@ from sklearn.metrics import (
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold, MultilabelStratifiedShuffleSplit
 import json
 import yaml
-from tqdm import tqdm
 import warnings
 import random
+import os
 warnings.filterwarnings('ignore')
 
 try:
@@ -304,87 +306,65 @@ def optimize_thresholds(y_true, y_probs, num_thresholds=100):
     return best_thresholds, best_f1s
 
 
-def train_epoch(model, dataloader, optimizer, scheduler, criterion, device, scaler=None, use_fgm=False, grad_accum=1):
-    model.train()
-    total_loss = 0
+class CustomTrainer(Trainer):
+    def __init__(self, *args, custom_loss_fn=None, use_fgm=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.custom_loss_fn = custom_loss_fn
+        self.use_fgm = use_fgm
+        self.fgm = FGM(self.model) if use_fgm else None
     
-    fgm = FGM(model) if use_fgm else None
-    
-    progress_bar = tqdm(dataloader, desc="Training")
-    for batch_idx, batch in enumerate(progress_bar):
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        targets = batch['labels'].to(device)
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.get("labels")
+        model_inputs = {k: v for k, v in inputs.items() if k != "labels"}
+        outputs = model(**model_inputs)
+        logits = outputs if isinstance(outputs, torch.Tensor) else outputs.get('logits')
         
-        if scaler is not None:
-            with torch.cuda.amp.autocast():
-                logits = model(input_ids=input_ids, attention_mask=attention_mask)
-                loss = criterion(logits, targets) / grad_accum
-            
-            scaler.scale(loss).backward()
-            
-            if use_fgm and fgm and (batch_idx + 1) % grad_accum == 0:
-                fgm.attack()
-                with torch.cuda.amp.autocast():
-                    logits_adv = model(input_ids=input_ids, attention_mask=attention_mask)
-                    loss_adv = criterion(logits_adv, targets) / grad_accum
-                scaler.scale(loss_adv).backward()
-                fgm.restore()
-            
-            if (batch_idx + 1) % grad_accum == 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
-                if scheduler is not None:
-                    scheduler.step()
+        if self.custom_loss_fn is not None:
+            loss = self.custom_loss_fn(logits, labels)
         else:
-            logits = model(input_ids=input_ids, attention_mask=attention_mask)
-            loss = criterion(logits, targets) / grad_accum
-            loss.backward()
-            
-            if use_fgm and fgm and (batch_idx + 1) % grad_accum == 0:
-                fgm.attack()
-                logits_adv = model(input_ids=input_ids, attention_mask=attention_mask)
-                loss_adv = criterion(logits_adv, targets) / grad_accum
-                loss_adv.backward()
-                fgm.restore()
-            
-            if (batch_idx + 1) % grad_accum == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
-                optimizer.zero_grad()
-                if scheduler is not None:
-                    scheduler.step()
+            loss = F.binary_cross_entropy_with_logits(logits, labels)
         
-        total_loss += loss.item()
-        progress_bar.set_postfix({'loss': loss.item()})
+        return (loss, {"logits": logits}) if return_outputs else loss
     
-    return total_loss / len(dataloader)
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        model.train()
+        inputs = self._prepare_inputs(inputs)
+        
+        loss = self.compute_loss(model, inputs)
+        
+        if self.args.gradient_accumulation_steps > 1:
+            loss = loss / self.args.gradient_accumulation_steps
+        
+        if self.use_fp16_legacy_mixed_precision:
+            self.scaler.scale(loss).backward()
+        elif self.deepspeed:
+            loss = self.deepspeed.backward(loss)
+        else:
+            loss.backward()
+        
+        if self.use_fgm and self.fgm:
+            self.fgm.attack()
+            adv_loss = self.compute_loss(model, inputs)
+            if self.args.gradient_accumulation_steps > 1:
+                adv_loss = adv_loss / self.args.gradient_accumulation_steps
+            if self.use_fp16_legacy_mixed_precision:
+                self.scaler.scale(adv_loss).backward()
+            elif self.deepspeed:
+                self.deepspeed.backward(adv_loss)
+            else:
+                adv_loss.backward()
+            self.fgm.restore()
+        
+        return loss.detach()
 
 
-def evaluate(model, dataloader, device):
-    model.eval()
-    all_labels = []
-    all_probs = []
+def compute_metrics_fn(eval_pred: EvalPrediction, threshold=0.5):
+    logits, labels = eval_pred.predictions, eval_pred.label_ids
+    probs = 1 / (1 + np.exp(-logits))
+    preds = (probs >= threshold).astype(int)
     
-    with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Evaluating"):
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            targets = batch['labels'].to(device)
-            
-            logits = model(input_ids=input_ids, attention_mask=attention_mask)
-            probs = torch.sigmoid(logits)
-            
-            all_probs.append(probs.cpu().numpy())
-            all_labels.append(targets.cpu().numpy())
-    
-    all_probs = np.vstack(all_probs)
-    all_labels = np.vstack(all_labels)
-    
-    return all_probs, all_labels
+    metrics = compute_metrics(labels, preds, probs)
+    return metrics
 
 
 def compute_metrics(y_true, y_pred, y_probs):
@@ -446,21 +426,6 @@ def train_fold(
         val_texts, val_labels, tokenizer, config['max_len']
     )
     
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config['train_params']['batch_size'],
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=config['train_params']['batch_size'] * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True
-    )
-    
     model = TransformerClassifier(
         model_name=config['model_name'],
         num_labels=config['num_labels'],
@@ -471,7 +436,7 @@ def train_fold(
         lora_dropout=config['peft']['dropout'],
         use_multisample_dropout=config.get('use_multisample_dropout', True),
         label_smoothing=config.get('label_smoothing', 0.0)
-    ).to(device)
+    )
     
     class_weights = None
     if config.get('use_class_weights', False):
@@ -488,65 +453,67 @@ def train_fold(
     elif config['loss_type'] == 'focal':
         criterion = FocalLoss(alpha=0.25, gamma=2.0, class_weights=class_weights)
     else:
-        criterion = nn.BCEWithLogitsLoss()
+        criterion = None
     
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config['train_params']['lr'],
-        weight_decay=config['train_params']['weight_decay']
-    )
+    output_dir = Path('./runs/dl_advanced') / f'fold_{fold_idx}'
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    num_training_steps = len(train_loader) * config['train_params']['epochs']
-    num_warmup_steps = int(num_training_steps * config['train_params']['warmup'])
-    
-    if config['train_params']['scheduler'] == 'cosine':
-        scheduler = get_cosine_schedule_with_warmup(
-            optimizer, num_warmup_steps, num_training_steps
-        )
-    else:
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer, num_warmup_steps, num_training_steps
-        )
-    
-    scaler = torch.cuda.amp.GradScaler() if config.get('precision') in ['fp16', 'bf16'] else None
+    fp16 = config.get('precision') == 'fp16'
+    bf16 = config.get('precision') == 'bf16'
     use_fgm = config.get('use_fgm', False)
     
-    best_f1 = 0
-    patience_counter = 0
+    deepspeed_config = config.get('deepspeed')
+    if deepspeed_config and isinstance(deepspeed_config, str):
+        if not os.path.exists(deepspeed_config):
+            deepspeed_config = None
     
-    for epoch in range(config['train_params']['epochs']):
-        print(f"\nEpoch {epoch + 1}/{config['train_params']['epochs']}")
-        
-        train_loss = train_epoch(
-            model, train_loader, optimizer, scheduler, criterion, device, scaler, use_fgm,
-            grad_accum=config['train_params'].get('grad_accum', 1)
-        )
-        print(f"Train Loss: {train_loss:.4f}")
-        
-        val_probs, val_labels = evaluate(model, val_loader, device)
-        
-        val_preds = (val_probs >= 0.5).astype(int)
-        metrics = compute_metrics(val_labels, val_preds, val_probs)
-        
-        print(f"Val F1 (micro): {metrics['f1_micro']:.4f}")
-        print(f"Val F1 (macro): {metrics['f1_macro']:.4f}")
-        print(f"Val F1 (samples): {metrics['f1_samples']:.4f}")
-        
-        if metrics['f1_samples'] > best_f1:
-            best_f1 = metrics['f1_samples']
-            patience_counter = 0
-            best_probs = val_probs
-            best_labels = val_labels
-        else:
-            patience_counter += 1
-        
-        if patience_counter >= config['logging']['early_stop']:
-            print(f"Early stopping at epoch {epoch + 1}")
-            break
+    training_args = TrainingArguments(
+        output_dir=str(output_dir),
+        num_train_epochs=config['train_params']['epochs'],
+        per_device_train_batch_size=config['train_params']['batch_size'],
+        per_device_eval_batch_size=config['train_params']['batch_size'] * 2,
+        learning_rate=config['train_params']['lr'],
+        weight_decay=config['train_params']['weight_decay'],
+        warmup_ratio=config['train_params']['warmup'],
+        lr_scheduler_type=config['train_params']['scheduler'],
+        fp16=fp16,
+        bf16=bf16,
+        logging_dir=str(output_dir / 'logs'),
+        logging_steps=50,
+        eval_strategy='epoch',
+        save_strategy='epoch',
+        save_total_limit=2,
+        load_best_model_at_end=True,
+        metric_for_best_model='f1_samples',
+        greater_is_better=True,
+        dataloader_num_workers=4,
+        dataloader_pin_memory=True,
+        gradient_accumulation_steps=config['train_params'].get('grad_accum', 1),
+        max_grad_norm=1.0,
+        report_to=['tensorboard'],
+        deepspeed=deepspeed_config,
+        seed=config['train_params']['seed']
+    )
     
-    best_thresholds, best_f1s = optimize_thresholds(best_labels, best_probs)
-    best_preds = (best_probs >= best_thresholds).astype(int)
-    final_metrics = compute_metrics(best_labels, best_preds, best_probs)
+    trainer = CustomTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        compute_metrics=compute_metrics_fn,
+        custom_loss_fn=criterion,
+        use_fgm=use_fgm
+    )
+    
+    trainer.train()
+    
+    predictions = trainer.predict(val_dataset)
+    val_probs = 1 / (1 + np.exp(-predictions.predictions))
+    val_labels = predictions.label_ids
+    
+    best_thresholds, best_f1s = optimize_thresholds(val_labels, val_probs)
+    best_preds = (val_probs >= best_thresholds).astype(int)
+    final_metrics = compute_metrics(val_labels, best_preds, val_probs)
     
     print(f"\n✅ Fold {fold_idx + 1} Best F1 (samples): {final_metrics['f1_samples']:.4f}")
     

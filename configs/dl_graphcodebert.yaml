@@ -1,27 +1,28 @@
-model_name: "microsoft/graphcodebert-base"
-tokenizer_name: "microsoft/graphcodebert-base"
+model_name: "microsoft/codebert-base"
+tokenizer_name: "microsoft/codebert-base"
 num_labels: 16
 max_len: 128
 precision: "fp16"
 gradient_checkpointing: false
+use_single_split: true
 
 peft:
-  enabled: true
+  enabled: false
   r: 16
   alpha: 32
   dropout: 0.1
 
-loss_type: "asl"
+loss_type: "focal"
 loss_params:
   gamma_pos: 0
   gamma_neg: 4
   clip: 0.05
 
 train_params:
-  batch_size: 32
+  batch_size: 128
   grad_accum: 1
-  epochs: 15
-  lr: 0.0003
+  epochs: 200
+  lr: 0.00003
   scheduler: "cosine"
   warmup: 0.1
   weight_decay: 0.01
@@ -38,8 +39,8 @@ eval:
   threshold_search: true
 
 logging:
-  output_dir: "runs/"
+  output_dir: "runs/codebert"
   save_every: 1
-  early_stop: 3
+  early_stop: 50
   tensorboard: false
 

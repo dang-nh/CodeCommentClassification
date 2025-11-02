@@ -24,7 +24,7 @@ from tqdm import tqdm
 import warnings
 import random
 warnings.filterwarnings('ignore')
-
+import os
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -122,11 +122,13 @@ class TransformerClassifier(nn.Module):
         use_lora=True,
         lora_r=8,
         lora_alpha=16,
-        lora_dropout=0.05
+        lora_dropout=0.05,
+        pooling_strategy='cls'
     ):
         super().__init__()
         self.num_labels = num_labels
         self.use_lora = use_lora
+        self.pooling_strategy = pooling_strategy
         
         self.encoder = AutoModel.from_pretrained(model_name)
         
@@ -148,7 +150,16 @@ class TransformerClassifier(nn.Module):
             total_params = sum(p.numel() for p in self.encoder.parameters())
             print(f"✅ Full SFT enabled: {trainable_params:,}/{total_params:,} parameters trainable ({trainable_params/total_params*100:.1f}%)")
         
+        if pooling_strategy == 'concat':
+            classifier_input_size = hidden_size * 3
+        else:
+            classifier_input_size = hidden_size
+        
         self.classifier = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(classifier_input_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_size, hidden_size // 2),
             nn.LayerNorm(hidden_size // 2),
@@ -172,21 +183,45 @@ class TransformerClassifier(nn.Module):
                 return_dict=True
             )
         
-        pooled_output = outputs.last_hidden_state[:, 0, :]
+        hidden_states = outputs.last_hidden_state
+        
+        if self.pooling_strategy == 'concat':
+            cls_output = hidden_states[:, 0, :]
+            mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
+            sum_hidden = torch.sum(hidden_states * mask_expanded, dim=1)
+            sum_mask = mask_expanded.sum(dim=1).clamp(min=1e-9)
+            mean_output = sum_hidden / sum_mask
+            hidden_masked = hidden_states.masked_fill(mask_expanded == 0, -1e9)
+            max_output = torch.max(hidden_masked, dim=1)[0]
+            pooled_output = torch.cat([cls_output, mean_output, max_output], dim=-1)
+        elif self.pooling_strategy == 'mean':
+            mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
+            sum_hidden = torch.sum(hidden_states * mask_expanded, dim=1)
+            sum_mask = mask_expanded.sum(dim=1).clamp(min=1e-9)
+            pooled_output = sum_hidden / sum_mask
+        else:
+            pooled_output = hidden_states[:, 0, :]
+        
         logits = self.classifier(pooled_output)
         return logits
 
 
-def optimize_thresholds(y_true, y_probs, num_thresholds=100):
-    thresholds = np.linspace(0.1, 0.9, num_thresholds)
+def optimize_thresholds(y_true, y_probs, num_thresholds=200):
+    thresholds = np.linspace(0.05, 0.95, num_thresholds)
     num_labels = y_true.shape[1]
     best_thresholds = np.ones(num_labels) * 0.5
     best_f1s = np.zeros(num_labels)
     
     for label_idx in range(num_labels):
+        label_true = y_true[:, label_idx]
+        label_probs = y_probs[:, label_idx]
+        
+        if label_true.sum() == 0:
+            continue
+            
         for threshold in thresholds:
-            y_pred = (y_probs[:, label_idx] >= threshold).astype(int)
-            f1 = f1_score(y_true[:, label_idx], y_pred, zero_division=0)
+            y_pred = (label_probs >= threshold).astype(int)
+            f1 = f1_score(label_true, y_pred, zero_division=0)
             if f1 > best_f1s[label_idx]:
                 best_f1s[label_idx] = f1
                 best_thresholds[label_idx] = threshold
@@ -332,7 +367,8 @@ def train_fold(
         use_lora=config['peft']['enabled'],
         lora_r=config['peft']['r'],
         lora_alpha=config['peft']['alpha'],
-        lora_dropout=config['peft']['dropout']
+        lora_dropout=config['peft']['dropout'],
+        pooling_strategy=config.get('pooling_strategy', 'cls')
     ).to(device)
     
     if config['loss_type'] == 'asl':
@@ -477,6 +513,8 @@ def main():
         
         print(f"Train set: {len(train_texts)} samples")
         print(f"Test set:  {len(val_texts)} samples")
+        print(f"Train labels: {len(train_labels)}")
+        print(f"Test labels: {len(val_labels)}")
         print(f"\nTrain label distribution:")
         for i, label in enumerate(label_columns):
             train_count = train_labels[:, i].sum()
@@ -517,8 +555,9 @@ def main():
             )
             fold_results.append(result)
     
-    output_dir = Path('./runs/dl_solution')
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(config['logging']['output_dir'])
+    # output_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(config['logging']['output_dir'], exist_ok=True)
     
     print("\n" + "="*80)
     if use_single_split:
