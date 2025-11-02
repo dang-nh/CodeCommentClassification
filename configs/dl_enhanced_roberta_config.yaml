@@ -1,0 +1,65 @@
+# Enhanced RoBERTa Config - Optimized to Beat STACC (F1=0.744)
+# Using RoBERTa-large for maximum performance
+
+model_name: "roberta-large"
+tokenizer_name: "roberta-large"
+num_labels: 16
+max_len: 512
+
+data:
+  raw_path: "./data/raw/sentences.csv"
+
+# Enhanced Architecture
+use_multi_sample_dropout: true
+use_attention_pooling: true
+pooling_strategy: "concat_all"  # CLS + Mean + Max + Attention
+
+# PEFT Configuration
+peft:
+  enabled: true
+  r: 16
+  alpha: 32
+  dropout: 0.05
+
+# Enhanced Loss Configuration
+loss_type: "combined"
+label_smoothing: 0.1
+use_rdrop: true
+rdrop_alpha: 5.0
+
+loss_params:
+  gamma_pos: 0
+  gamma_neg: 4
+  clip: 0.05
+
+# Training Configuration
+train_params:
+  batch_size: 8  # Smaller for large model
+  epochs: 12
+  lr: 1.5e-5  # Slightly lower for large model
+  weight_decay: 0.01
+  warmup: 0.1
+  seed: 42
+  scheduler: "cosine"
+
+# Advanced Optimizations
+use_layerwise_lr: true
+lr_decay: 0.95
+
+use_ema: true
+ema_decay: 0.999
+
+num_threshold_search: 200
+
+# Precision
+precision: "fp16"
+
+# Cross-Validation or Single Split
+use_single_split: true
+
+# Logging
+logging:
+  output_dir: "./runs/enhanced_roberta_large_vs_stacc"
+  early_stop: 5
+  save_model: true
+
